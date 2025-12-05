@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data & Logs
+*.log
+trading_bot.log
+
+# Generated Files
+*.png
+*.jpg
+*.jpeg
+book_content.txt
+strategies.txt
+
+# Large Files - Don't commit the PDF
+*.pdf
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary Files
+*.txt.tmp
+*.bak
