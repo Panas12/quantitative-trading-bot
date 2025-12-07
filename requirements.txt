@@ -21,6 +21,7 @@ alpaca-trade-api>=3.0.0
 python-dateutil>=2.8.0
 pytz>=2023.3
 requests>=2.31.0
+python-dotenv>=1.0.0
 
 # Logging and Monitoring
 colorlog>=6.7.0
