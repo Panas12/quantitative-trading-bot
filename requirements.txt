@@ -25,3 +25,8 @@ python-dotenv>=1.0.0
 
 # Logging and Monitoring
 colorlog>=6.7.0
+
+hmmlearn==0.3.3
+scikit-learn==1.7.2
+
+
