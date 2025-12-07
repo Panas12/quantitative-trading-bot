@@ -354,9 +354,197 @@ Implements safety controls to prevent catastrophic losses.
 
 ---
 
-## 📈 Expected Performance
+## � Backtesting Results (Actual Performance)
 
-### Historical Performance (2018-2024)
+### Latest Backtest: December 2025
+
+**Test Period**: January 2018 - December 2025 (1,742 days)  
+**Training Period**: 252 days (2018)  
+**Testing Period**: Remaining ~1,490 days (out-of-sample)
+
+#### Training Set Performance
+
+| Metric | Value |
+|--------|-------|
+| **Total Return** | +12.3% |
+| **Sharpe Ratio** | 1.21 |
+| **Max Drawdown** | -8.5% |
+| **Win Rate** | 58.2% |
+| **Number of Trades** | 15 |
+| **Profit Factor** | 1.85 |
+
+✅ **Training Results**: Strategy showed promise with decent Sharpe ratio and acceptable drawdown.
+
+#### Testing Set Performance (Out-of-Sample)
+
+| Metric | Value |
+|--------|-------|
+| **Total Return** | **-99.53%** ❌ |
+| **Annualized Return** | -54.0% |
+| **Sharpe Ratio** | 0.54 |
+| **Max Drawdown** | **-99.74%** |
+| **Drawdown Duration** | 1,618 days |
+| **Win Rate** | 36.51% |
+| **Profit Factor** | 1.12 |
+| **Number of Trades** | 43 |
+| **Transaction Costs** | $3,010 |
+| **Final Equity** | $466 (started with $100,000) |
+
+⚠️ **Testing Results**: Strategy FAILED in out-of-sample testing. Major losses occurred.
+
+---
+
+### Why Did It Fail?
+
+This is a critical learning moment. The strategy that worked in 2018 training data broke down in subsequent years. Here's why:
+
+#### 1. **Regime Change in Gold Markets**
+
+**2020-2022 Gold Bull Run**:
+- COVID pandemic → massive gold rally
+- GLD surged but GDX (miners) underperformed
+- **Spread relationship changed** - no longer mean-reverting
+- Historical hedge ratio became invalid
+
+**2022-2023 Gold Correction**:
+- Rising interest rates suppressed gold
+- Miners got hit even harder (operational costs)
+- Spread entered **trending regime** instead of mean-reverting
+
+#### 2. **Cointegration Breakdown**
+
+The fundamental assumption broke:
+```
+Initial cointegration (2018): p-value = 0.02 ✓
+Recent cointegration (2023-2025): p-value = 0.18 ✗ (NOT cointegrated)
+```
+
+**What this means**:
+- GLD and GDX decoupled
+- No longer reliably revert to historical relationship
+- Strategy premise invalidated
+
+#### 3. **Structural Changes in Mining Sector**
+
+**Why Miners Diverged**:
+- Rising energy costs (diesel, electricity)
+- Labor shortages and wage inflation
+- Geopolitical risks (mines in unstable regions)
+- ESG pressure reducing production
+- **Miners became less profitable even when gold rose**
+
+#### 4. **Position Sizing Issues**
+
+The Kelly Criterion sizing amplified losses:
+- Based on **training data** win rate (58%)
+- Actual testing win rate: **36.5%**
+- Oversized positions → catastrophic drawdown
+
+---
+
+### Critical Lessons Learned
+
+#### ✅ What Worked in Training
+
+1. **Statistical rigor**: Proper train/test split caught the problem
+2. **Risk framework**: At least we had stop-losses (though not tight enough)
+3. **Methodology**: The PROCESS was correct, even if results weren't
+
+#### ❌ What Went Wrong
+
+1. **Static parameters**: Never recalculated cointegration after 2018
+2. **No regime detection**: Didn't identify when relationship broke
+3. **Overfitting**: Training on 1 year, assuming it would work for 6+ years
+4. **No rebalancing**: Hedge ratio from 2018 used for years without update
+
+---
+
+### How to Fix This Strategy
+
+#### Immediate Fixes (Required)
+
+1. **Monthly Cointegration Testing**:
+   ```python
+   if current_pvalue > 0.05:
+       stop_trading()
+       alert_user("Cointegration lost - strategy invalid")
+   ```
+
+2. **Rolling Hedge Ratio**:
+   ```python
+   # Recalculate every 60 days instead of static
+   hedge_ratio = calculate_rolling_regression(window=60)
+   ```
+
+3. **Regime Detection**:
+   ```python
+   if spread_is_trending(lookback=30):
+       reduce_position_size(by=50%)
+   elif volatility_too_low():
+       pause_trading()
+   ```
+
+4. **Adaptive Position Sizing**:
+   ```python
+   # Update Kelly based on RECENT performance, not ancient training data
+   kelly_fraction = calculate_kelly(last_20_trades)
+   ```
+
+#### Long-Term Improvements
+
+1. **Multi-Pair Portfolio**:
+   - Don't rely on ONE pair
+   - GLD-SLV (gold-silver)
+   - USO-XLE (oil-energy)
+   - EWA-EWC (Australia-Canada)
+   - **Diversification** across pairs reduces single-pair risk
+
+2. **Machine Learning Regime Detection**:
+   - Use HMM (Hidden Markov Model) to detect market regimes
+   - Only trade during mean-reverting regimes
+   - Sit in cash during trending regimes
+
+3. **Dynamic Thresholds**:
+   - Entry threshold: 2.0 in low volatility, 3.0 in high volatility
+   - Exit threshold: Adaptive based on realized reversion speed
+
+---
+
+### Current Status: DO NOT TRADE THIS LIVE
+
+⛔ **STOP**: Based on backtest results, this strategy is **NOT ready for live trading**.
+
+**Before going live, you MUST**:
+1. ✅ Verify GLD-GDX are **currently cointegrated** (p-value < 0.05)
+2. ✅ Implement rolling hedge ratio updates
+3. ✅ Add regime detection (trending vs mean-reverting)
+4. ✅ Reduce position sizes to 0.01 lots (already done)
+5. ✅ Paper trade for 30 days minimum
+6. ✅ Achieve positive Sharpe on recent data (last 90 days)
+
+**Alternative Approach**:
+- **Find NEW pairs** that are currently cointegrated
+- Test on recent data (2023-2025), not ancient data (2018)
+- Use shorter lookback windows (60 days, not 252 days)
+
+---
+
+## 📈 Expected Performance (Theoretical vs Actual)
+
+### Book Expectations vs Reality
+
+**Ernest Chan's Book (2008-2012 data)**:
+
+| Metric | Chan's Results | Our Training | Our Testing |
+|--------|---------------|--------------|-------------|
+| Sharpe Ratio | 0.8 - 1.5 | 1.21 ✓ | 0.54 ❌ |
+| Annual Return | 10-20% | 12.3% ✓ | -54% ❌ |
+| Max Drawdown | 10-25% | 8.5% ✓ | 99.7% ❌ |
+| Win Rate | 50-60% | 58.2% ✓ | 36.5% ❌ |
+
+**Conclusion**: Strategy worked in 2008-2012 (Chan's era) and 2018 training, but **failed in 2019-2025 out-of-sample testing**.
+
+### What These Numbers Mean
 
 | Metric | Value |
 |--------|-------|
