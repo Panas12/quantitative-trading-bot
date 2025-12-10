@@ -52,8 +52,8 @@ class LiveTradingExecutor:
         
         # Initialize portfolio manager
         pairs = [
-            PairConfig(symbol1='SLV', symbol2='SIVR', allocation=0.5, max_position_size=0.01),
-            PairConfig(symbol1='USO', symbol2='XLE', allocation=0.5, max_position_size=0.01),
+            PairConfig(symbol1='SLV', symbol2='SIVR', allocation=0.5, max_position_size=0.5),
+            PairConfig(symbol1='USO', symbol2='XLE', allocation=0.5, max_position_size=0.5),
         ]
         
         self.portfolio = MultiPairPortfolio(pairs=pairs, total_capital=capital)
@@ -105,7 +105,7 @@ class LiveTradingExecutor:
     
     def execute_signal(self, pair_name: str, signal: str, zscore: float, regime: str):
         """
-        Execute a trading signal.
+        Execute a trading signal with validation and verification.
         
         Args:
             pair_name: Pair identifier (e.g., 'SLV-SIVR')
@@ -119,6 +119,10 @@ class LiveTradingExecutor:
         
         # Parse pair symbols
         symbol1, symbol2 = pair_name.split('-')
+        
+        # Get pair configuration for position size
+        pair_config = next((p for p in self.portfolio.pairs if f"{p.symbol1}-{p.symbol2}" == pair_name), None)
+        position_size = pair_config.max_position_size if pair_config else 0.01
         
         # Get hedge ratio and thresholds
         hedge_ratio = self.portfolio.strategies[pair_name].hedge_ratio
@@ -139,6 +143,11 @@ class LiveTradingExecutor:
         
         # Get current market prices for stop-loss/take-profit
         try:
+            # Check API health before proceeding
+            if not self.broker.check_api_health():
+                logger.error("API health check failed - aborting trade")
+                return
+            
             market1 = self.broker.get_market_details(symbol1)
             current_price1 = float(market1['snapshot']['bid'])
             
@@ -147,6 +156,14 @@ class LiveTradingExecutor:
                 # Long spread: Buy symbol1, Short symbol2
                 stop_loss = current_price1 - 2  # $2 risk
                 take_profit = current_price1 + 5  # $5 profit target
+                
+                # Validate order parameters before submitting
+                valid, error_msg = self.broker.validate_order_parameters(
+                    symbol1, 'BUY', position_size, stop_loss, take_profit
+                )
+                if not valid:
+                    logger.error(f"Order validation failed: {error_msg}")
+                    return
                 
                 logger.info(f"\nExecuting LONG spread:")
                 logger.info(f"  Buy {symbol1} at ~${current_price1:.2f}")
@@ -158,24 +175,44 @@ class LiveTradingExecutor:
                 result1 = self.broker.create_position(
                     epic=symbol1,
                     direction='BUY',
-                    size=0.01,
+                    size=position_size,
                     stop_loss=stop_loss,
                     take_profit=take_profit
                 )
+                
+                # Verify first position was created
+                deal_ref1 = result1.get('dealReference')
+                logger.info(f"✓ Position 1 created: {deal_ref1}")
+                
+                # Wait briefly for position to register
+                import time
+                time.sleep(1)
                 
                 # Short symbol2 with inverse SL/TP logic
                 result2 = self.broker.create_position(
                     epic=symbol2,
                     direction='SELL',
-                    size=0.01
+                    size=position_size
                 )
                 
-                logger.info(f"✓ Trade executed: {result1.get('dealReference')}")
+                deal_ref2 = result2.get('dealReference')
+                logger.info(f"✓ Position 2 created: {deal_ref2}")
+                
+                # Verify both positions are open
+                self.verify_positions_opened([deal_ref1, deal_ref2])
                 
             elif signal == 'SHORT':
                 # Short spread: Short symbol1, Buy symbol2
                 stop_loss = current_price1 + 2
                 take_profit = current_price1 - 5
+                
+                # Validate order parameters
+                valid, error_msg = self.broker.validate_order_parameters(
+                    symbol1, 'SELL', position_size, stop_loss, take_profit
+                )
+                if not valid:
+                    logger.error(f"Order validation failed: {error_msg}")
+                    return
                 
                 logger.info(f"\nExecuting SHORT spread:")
                 logger.info(f"  Short {symbol1} at ~${current_price1:.2f}")
@@ -184,24 +221,35 @@ class LiveTradingExecutor:
                 result1 = self.broker.create_position(
                     epic=symbol1,
                     direction='SELL',
-                    size=0.01,
+                    size=position_size,
                     stop_loss=stop_loss,
                     take_profit=take_profit
                 )
                 
+                deal_ref1 = result1.get('dealReference')
+                logger.info(f"✓ Position 1 created: {deal_ref1}")
+                
+                import time
+                time.sleep(1)
+                
                 result2 = self.broker.create_position(
                     epic=symbol2,
                     direction='BUY',
-                    size=0.01
+                    size=position_size
                 )
                 
-                logger.info(f"✓ Trade executed: {result1.get('dealReference')}")
+                deal_ref2 = result2.get('dealReference')
+                logger.info(f"✓ Position 2 created: {deal_ref2}")
+                
+                # Verify both positions are open
+                self.verify_positions_opened([deal_ref1, deal_ref2])
                 
             elif signal == 'EXIT':
                 logger.info(f"\nClosing {pair_name} positions...")
                 
                 # Get all open positions
                 positions = self.broker.get_positions()
+                closed_count = 0
                 
                 for pos in positions:
                     pos_data = pos['position']
@@ -211,13 +259,51 @@ class LiveTradingExecutor:
                         deal_id = pos_data['dealId']
                         logger.info(f"  Closing {pos_epic} position {deal_id}")
                         self.broker.close_position(deal_id)
+                        closed_count += 1
                 
-                logger.info("✓ Positions closed")
+                logger.info(f"✓ Closed {closed_count} position(s)")
                 
         except CapitalComAPIError as e:
             logger.error(f"Failed to execute trade: {e}")
         except Exception as e:
             logger.error(f"Unexpected error executing trade: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+    
+    def verify_positions_opened(self, deal_references: list):
+        """
+        Verify that positions were actually opened after order submission.
+        
+        Args:
+            deal_references: List of deal reference IDs to verify
+        """
+        try:
+            import time
+            time.sleep(2)  # Wait for positions to register
+            
+            positions = self.broker.get_positions()
+            opened_deals = set()
+            
+            for pos in positions:
+                pos_ref = pos['position'].get('dealReference', '')
+                if pos_ref:
+                    opened_deals.add(pos_ref)
+            
+            verified = 0
+            for deal_ref in deal_references:
+                if deal_ref in opened_deals:
+                    logger.info(f"  ✓ Verified position opened: {deal_ref}")
+                    verified += 1
+                else:
+                    logger.warning(f"  ⚠ Position not found: {deal_ref}")
+            
+            if verified == len(deal_references):
+                logger.info(f"✓ All {verified} position(s) verified")
+            else:
+                logger.warning(f"⚠ Only {verified}/{len(deal_references)} positions verified")
+                
+        except Exception as e:
+            logger.error(f"Failed to verify positions: {e}")
     
     def check_and_execute_signals(self):
         """

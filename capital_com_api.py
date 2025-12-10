@@ -12,10 +12,11 @@ Created: December 2025
 import os
 import logging
 import time
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 import requests
 from dotenv import load_dotenv
+from functools import wraps
 
 # Load environment variables
 load_dotenv()
@@ -93,12 +94,38 @@ class CapitalComAPI:
         self.last_request_time = 0
         self.min_request_interval = 0.1  # 100ms between requests (10 req/sec)
         
+        # Retry configuration
+        self.max_retries = 3
+        self.retry_delay = 1.0  # Initial retry delay in seconds
+        
     def _wait_for_rate_limit(self):
         """Ensure we don't exceed rate limits (10 req/sec)"""
         elapsed = time.time() - self.last_request_time
         if elapsed < self.min_request_interval:
             time.sleep(self.min_request_interval - elapsed)
         self.last_request_time = time.time()
+    
+    def _is_transient_error(self, status_code: int, error_msg: str = "") -> bool:
+        """
+        Determine if an error is transient and worth retrying.
+        
+        Args:
+            status_code: HTTP status code
+            error_msg: Error message if available
+        
+        Returns:
+            True if error is likely transient
+        """
+        # Network/server errors that are worth retrying
+        transient_codes = {
+            408,  # Request Timeout
+            429,  # Too Many Requests
+            500,  # Internal Server Error
+            502,  # Bad Gateway
+            503,  # Service Unavailable
+            504,  # Gateway Timeout
+        }
+        return status_code in transient_codes
     
     def _make_request(
         self, 
@@ -107,10 +134,11 @@ class CapitalComAPI:
         headers: Dict = None,
         params: Dict = None,
         data: Dict = None,
-        use_auth: bool = True
+        use_auth: bool = True,
+        retry: bool = True
     ) -> requests.Response:
         """
-        Make HTTP request to Capital.com API with rate limiting.
+        Make HTTP request to Capital.com API with rate limiting and retry logic.
         
         Args:
             method: HTTP method (GET, POST, PUT, DELETE)
@@ -119,50 +147,90 @@ class CapitalComAPI:
             params: Query parameters
             data: Request body (JSON)
             use_auth: Whether to include authentication tokens
+            retry: Whether to retry on transient errors
         
         Returns:
             Response object
         """
-        self._wait_for_rate_limit()
+        attempt = 0
+        last_exception = None
         
-        url = f"{self.base_url}{endpoint}"
+        while attempt < (self.max_retries if retry else 1):
+            try:
+                self._wait_for_rate_limit()
+                
+                url = f"{self.base_url}{endpoint}"
+                
+                # Build headers
+                req_headers = {
+                    'Content-Type': 'application/json',
+                    'X-CAP-API-KEY': self.api_key
+                }
+                
+                # Add authentication tokens if available and requested
+                if use_auth and self.cst_token and self.x_security_token:
+                    req_headers['CST'] = self.cst_token
+                    req_headers['X-SECURITY-TOKEN'] = self.x_security_token
+                
+                # Merge additional headers
+                if headers:
+                    req_headers.update(headers)
+                
+                # Log request (without sensitive data)
+                logger.debug(f"{method} {endpoint} (attempt {attempt + 1})")
+                
+                response = requests.request(
+                    method=method,
+                    url=url,
+                    headers=req_headers,
+                    params=params,
+                    json=data,
+                    timeout=30
+                )
+                
+                # Log response status
+                logger.debug(f"Response: {response.status_code}")
+                
+                # Check if we should retry on this status code
+                if retry and self._is_transient_error(response.status_code):
+                    attempt += 1
+                    if attempt < self.max_retries:
+                        delay = self.retry_delay * (2 ** (attempt - 1))  # Exponential backoff
+                        logger.warning(f"Transient error {response.status_code}, retrying in {delay}s...")
+                        time.sleep(delay)
+                        continue
+                
+                return response
+                
+            except requests.exceptions.Timeout as e:
+                attempt += 1
+                last_exception = e
+                if attempt < self.max_retries and retry:
+                    delay = self.retry_delay * (2 ** (attempt - 1))
+                    logger.warning(f"Request timeout, retrying in {delay}s...")
+                    time.sleep(delay)
+                else:
+                    logger.error(f"Request failed after {attempt} attempts: {e}")
+                    raise CapitalComAPIError(f"API request timeout: {e}")
+                    
+            except requests.exceptions.ConnectionError as e:
+                attempt += 1
+                last_exception = e
+                if attempt < self.max_retries and retry:
+                    delay = self.retry_delay * (2 ** (attempt - 1))
+                    logger.warning(f"Connection error, retrying in {delay}s...")
+                    time.sleep(delay)
+                else:
+                    logger.error(f"Connection failed after {attempt} attempts: {e}")
+                    raise CapitalComAPIError(f"API connection failed: {e}")
+                    
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Request failed: {e}")
+                raise CapitalComAPIError(f"API request failed: {e}")
         
-        # Build headers
-        req_headers = {
-            'Content-Type': 'application/json',
-            'X-CAP-API-KEY': self.api_key
-        }
-        
-        # Add authentication tokens if available and requested
-        if use_auth and self.cst_token and self.x_security_token:
-            req_headers['CST'] = self.cst_token
-            req_headers['X-SECURITY-TOKEN'] = self.x_security_token
-        
-        # Merge additional headers
-        if headers:
-            req_headers.update(headers)
-        
-        # Log request (without sensitive data)
-        logger.debug(f"{method} {endpoint}")
-        
-        try:
-            response = requests.request(
-                method=method,
-                url=url,
-                headers=req_headers,
-                params=params,
-                json=data,
-                timeout=30
-            )
-            
-            # Log response status
-            logger.debug(f"Response: {response.status_code}")
-            
-            return response
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request failed: {e}")
-            raise CapitalComAPIError(f"API request failed: {e}")
+        # If we've exhausted all retries
+        if last_exception:
+            raise CapitalComAPIError(f"Request failed after {self.max_retries} retries: {last_exception}")
     
     def authenticate(self) -> bool:
         """
@@ -503,6 +571,66 @@ class CapitalComAPI:
                 f"Failed to update position: {response.status_code}"
             )
     
+    def validate_order_parameters(
+        self,
+        epic: str,
+        direction: str,
+        size: float,
+        stop_loss: Optional[float] = None,
+        take_profit: Optional[float] = None
+    ) -> Tuple[bool, str]:
+        """
+        Validate order parameters before submission.
+        
+        Args:
+            epic: Instrument identifier
+            direction: 'BUY' or 'SELL'
+            size: Position size
+            stop_loss: Stop loss level
+            take_profit: Take profit level
+        
+        Returns:
+            (is_valid, error_message) tuple
+        """
+        # Check direction
+        if direction.upper() not in ['BUY', 'SELL']:
+            return False, f"Invalid direction: {direction}"
+        
+        # Check size
+        if size <= 0:
+            return False, f"Invalid size: {size} (must be > 0)"
+        
+        if size > 100:  # Sanity check
+            return False, f"Size {size} seems unusually large"
+        
+        # Check stop loss vs take profit logic
+        if stop_loss and take_profit:
+            if direction.upper() == 'BUY':
+                if stop_loss >= take_profit:
+                    return False, f"For BUY: stop_loss ({stop_loss}) must be < take_profit ({take_profit})"
+            else:  # SELL
+                if stop_loss <= take_profit:
+                    return False, f"For SELL: stop_loss ({stop_loss}) must be > take_profit ({take_profit})"
+        
+        return True, ""
+    
+    def check_api_health(self) -> bool:
+        """
+        Check if API connection is healthy.
+        
+        Returns:
+            True if API is accessible and responsive
+        """
+        try:
+            # Try to get account info as a health check
+            if not self.cst_token:
+                return False
+            
+            response = self._make_request('GET', '/api/v1/accounts', retry=False)
+            return response.status_code == 200
+        except:
+            return False
+    
     def logout(self):
         """Close the current session"""
         if not self.cst_token:
@@ -510,7 +638,7 @@ class CapitalComAPI:
             return
         
         try:
-            response = self._make_request('DELETE', '/api/v1/session')
+            response = self._make_request('DELETE', '/api/v1/session', retry=False)
             if response.status_code == 200:
                 logger.info("✓ Session closed successfully")
             self.cst_token = None

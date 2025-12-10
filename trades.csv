@@ -1,0 +1,2 @@
+trade_id,pair,direction,entry_time,exit_time,entry_price,exit_price,size,pnl,pnl_pct,regime,entry_zscore,exit_zscore,hold_days
+001,SLV-SIVR,LONG,2025-12-09 09:35:00,2025-12-13 14:20:00,25.5,25.75,0.01,2.5,0.98,MEAN_REVERTING,-2.13,0.85,4

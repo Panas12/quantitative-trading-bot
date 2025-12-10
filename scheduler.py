@@ -220,31 +220,31 @@ Mode: {'DRY RUN' if self.executor.dry_run else 'LIVE TRADING'}
         """Setup trading schedule"""
         logger.info("Setting up schedule...")
         
-        # Pre-market check (9:00 AM EST)
-        schedule.every().day.at("09:00").do(self.check_signals_job)
+        # Pre-market check (9:00 AM EST = 3:00 PM Amsterdam)
+        schedule.every().day.at("15:00").do(self.check_signals_job)
         
-        # Post-open check (9:35 AM EST)
-        schedule.every().day.at("09:35").do(self.check_signals_job)
+        # Post-open check (9:35 AM EST = 3:35 PM Amsterdam)
+        schedule.every().day.at("15:35").do(self.check_signals_job)
         
-        # Midday check (12:00 PM EST)
-        schedule.every().day.at("12:00").do(self.check_signals_job)
+        # Midday check (12:00 PM EST = 6:00 PM Amsterdam)
+        schedule.every().day.at("18:00").do(self.check_signals_job)
         
-        # Pre-close check (3:55 PM EST)
-        schedule.every().day.at("15:55").do(self.check_signals_job)
+        # Pre-close check (3:55 PM EST = 9:55 PM Amsterdam)
+        schedule.every().day.at("21:55").do(self.check_signals_job)
         
         # Position monitoring (every 2 hours during market hours)
         schedule.every(2).hours.do(self.monitor_positions_job)
         
-        # Daily summary at close (4:05 PM EST)
-        schedule.every().day.at("16:05").do(self.daily_summary_job)
+        # Daily summary at close (4:05 PM EST = 10:05 PM Amsterdam)
+        schedule.every().day.at("22:05").do(self.daily_summary_job)
         
-        logger.info("Schedule configured:")
-        logger.info("  - 09:00 AM: Pre-market signal check")
-        logger.info("  - 09:35 AM: Post-open signal check")
-        logger.info("  - 12:00 PM: Midday signal check")
-        logger.info("  - 15:55 PM: Pre-close signal check")
+        logger.info("Schedule configured (AMSTERDAM TIME):")
+        logger.info("  - 15:00 (3:00 PM): Pre-market (9:00 AM EST)")
+        logger.info("  - 15:35 (3:35 PM): Post-open (9:35 AM EST)")
+        logger.info("  - 18:00 (6:00 PM): Midday (12:00 PM EST)")
+        logger.info("  - 21:55 (9:55 PM): Pre-close (3:55 PM EST)")
         logger.info("  - Every 2 hours: Position monitoring")
-        logger.info("  - 16:05 PM: Daily summary")
+        logger.info("  - 22:05 (10:05 PM): Daily summary (4:05 PM EST)")
     
     def run(self):
         """Start the scheduler"""
@@ -286,13 +286,15 @@ if __name__ == '__main__':
 ║           AUTOMATED TRADING BOT SCHEDULER                        ║
 ╚══════════════════════════════════════════════════════════════════╝
 
-This scheduler will run signal checks at:
-  - 9:00 AM EST (pre-market)
-  - 9:35 AM EST (post-open)
-  - 12:00 PM EST (midday)
-  - 3:55 PM EST (pre-close)
-  - Every 2 hours (position monitoring)
-  - 4:05 PM EST (daily summary)
+This scheduler will run signal checks at (AMSTERDAM TIME):
+  - 3:00 PM  (15:00) - Pre-market   (9:00 AM EST)
+  - 3:35 PM  (15:35) - Post-open    (9:35 AM EST)
+  - 6:00 PM  (18:00) - Midday       (12:00 PM EST)
+  - 9:55 PM  (21:55) - Pre-close    (3:55 PM EST)
+  - Every 2 hours    - Position monitoring
+  - 10:05 PM (22:05) - Daily summary (4:05 PM EST)
+
+US Market hours: 3:30 PM - 10:00 PM Amsterdam
 
 Configure .env file with:
   TRADING_CAPITAL=111.55
