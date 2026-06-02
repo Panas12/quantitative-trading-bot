@@ -223,10 +223,29 @@ Mode: {'DRY RUN' if self.executor.dry_run else 'LIVE TRADING'}
         logger.info("SCHEDULED MARKET SCAN")
         logger.info("="*70)
         try:
+            # 1. Check for open positions before rotating
+            self.executor.connect_broker()
+            self.executor.initialize_portfolio()
+            risk = self.executor.portfolio.check_portfolio_risk()
+            
+            if risk['num_positions'] > 0:
+                logger.info(f"Cannot rotate pairs. Currently holding {risk['num_positions']} open position(s).")
+                logger.info("Skipping market scan until position is closed.")
+                return
+                
+            # 2. No open positions, run the scan
             from scanner import DynamicScanner
             scanner = DynamicScanner()
             scanner.scan_market()
             logger.info("Market scan complete. Best pair saved.")
+            
+            # 3. Re-initialize executor to load the new pair into memory
+            self.executor = LiveTradingExecutor(
+                capital=self.executor.capital,
+                dry_run=self.executor.dry_run
+            )
+            logger.info("Successfully loaded new pair into memory for trading!")
+            
         except Exception as e:
             logger.error(f"Error scanning market: {e}")
     
