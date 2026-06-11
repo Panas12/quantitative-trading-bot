@@ -87,7 +87,7 @@ class CapitalComAPI:
         # Session tokens (set after authentication)
         self.cst_token = None
         self.x_security_token = None
-        self.session = None
+        self.session = requests.Session()
         self.account_id = None
         
         # Rate limiting
@@ -179,7 +179,7 @@ class CapitalComAPI:
                 # Log request (without sensitive data)
                 logger.debug(f"{method} {endpoint} (attempt {attempt + 1})")
                 
-                response = requests.request(
+                response = self.session.request(
                     method=method,
                     url=url,
                     headers=req_headers,
@@ -643,6 +643,8 @@ class CapitalComAPI:
                 logger.info("✓ Session closed successfully")
             self.cst_token = None
             self.x_security_token = None
+            self.session.close()
+            self.session = requests.Session() # reset for future use
         except Exception as e:
             logger.warning(f"Error closing session: {e}")
 
